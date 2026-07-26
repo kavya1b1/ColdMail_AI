@@ -1,0 +1,30 @@
+{
+  "name": "Kavya Gupta ",
+  "email": "kavya.23bai10538@vitbhopal.ac.in",
+  "phone": "9829803323",
+  "linkedin": "https://www.linkedin.com/in/its-kavya-gupta/",
+  "github": "https://github.com/kavya1b1",
+  "portfolio": "https://portfolio-neww-rouge.vercel.app/",
+  "resume_path": "./resume.pdf",
+  "college": "VIT BHOPAL",
+  "degree": "B.Tech",
+  "graduation_year": 2027,
+  "skills": [
+    "html",
+    "css",
+    "js",
+    "python",
+    "cpp",
+    "ml",
+    "rag",
+    "ai",
+    "fine tunning",
+    "llm",
+    "nlp",
+    "cv",
+    "deep learning",
+    "artificial neural networking"
+  ],
+  "objective": "my objective it to get the job and excel in the field of artificial intelligence and machine learning and my interests are in python developer, ai developer, ml develoeper, ai engineer etc ",
+  "tone": "confident"
+}
