@@ -30,9 +30,11 @@ class ColdMailWorkflow:
         self.builder.add_node("human_approval", HumanApprovalNode())
         self.builder.add_node("send", SendNode())
 
-        self.builder.set_entry_point("research")
+        self.builder.set_entry_point("parse_resume")
 
         # Linear flow
+        self.builder.add_edge("parse_resume", "parse_jd")
+        self.builder.add_edge("parse_jd", "research")
         self.builder.add_edge("research", "match")
         self.builder.add_edge("match", "write")
         self.builder.add_edge("write", "review")

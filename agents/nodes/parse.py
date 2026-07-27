@@ -43,7 +43,12 @@ class ResumeParserNode:
 
             return {
                 "user_profile": profile,
-                "logs": [f"ResumeParser: Parsed resume for {result.name}"]
+                "resume_parse_result": result,
+                "resume_text": result.raw_text,
+                "resume_skills": result.skills,
+                "logs": [
+                    f"ResumeParser: Parsed resume for {result.name}"
+                ]
             }
 
         except Exception as e:
@@ -125,10 +130,16 @@ class JobDescriptionParserNode:
 
         try:
             parsed = self._parse_jd(jd.raw_text)
+
             return {
                 "job_description": parsed,
-                "logs": ["JDParser: Parsed successfully"]
+                "jd_text": parsed.raw_text,
+                "jd_skills": parsed.tech_stack,
+                "logs": [
+                    f"JDParser: Parsed '{parsed.title}' successfully"
+                ]
             }
+        
         except Exception as e:
             logger.error(f"JDParser error: {e}")
             return {

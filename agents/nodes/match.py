@@ -16,6 +16,14 @@ class MatchNode:
         logger.info("MatchNode starting...")
         
         profile_data = state.get("user_profile")
+        resume_text = state.get("resume_text", "")
+        resume_skills = state.get("resume_skills", [])
+
+        jd_text = state.get("jd_text", "")
+        jd_skills = state.get("jd_skills", [])
+
+        research_results = state.get("research_results", [])
+
         companies = state.get("companies", [])
         jobs = state.get("parsed_jobs", [])
         
@@ -39,6 +47,7 @@ class MatchNode:
             jobs.append(JobDescription())
         
         matches = []
+        match_context = []
         
         for company, job in zip(companies, jobs):
             try:
@@ -48,14 +57,44 @@ class MatchNode:
                     job = JobDescription(**job)
                 
                 match_result = self.matcher.match(profile, company, job)
+                matched_skills = list(
+                    set(resume_skills).intersection(
+                        set(job.tech_stack or [])
+                    )
+                )
+
+                missing_skills = list(
+                    set(job.tech_stack or []) -
+                    set(resume_skills)
+                )
+
+                match_context.append({
+                    "company": company.name,
+                    "matched_skills": matched_skills,
+                    "missing_skills": missing_skills,
+                    "company_summary": (
+                        research_results[len(match_context)]
+                        if len(research_results) > len(match_context)
+                        else {}
+                    )
+                })
+
+
                 matches.append(match_result)
-                logger.info(f"Matched {company.name}: {match_result.overall_score:.1f}")
+                logger.info(
+                    "Matched %s | Score %.1f | %d matched skills",
+                    company.name,
+                    match_result.overall_score,
+                    len(matched_skills),
+                )
                 
             except Exception as e:
                 logger.warning(f"Match failed for {company}: {e}")
                 matches.append(MatchScore(company_fit=50, skill_match=50, overall_score=50, talking_points=["General interest"]))
         
         state["matches"] = matches
+        state["match_context"] = match_context
+
         state["matched"] = True
         logger.info(f"MatchNode completed: {len(matches)} matches")
         return state

@@ -1,24 +1,589 @@
-"""Groq LLM Service for AI-powered email generation"""
+"""Groq LLM Service"""
+
+from __future__ import annotations
+
 import os
-from typing import Optional, Any
-from groq import Groq
-from config.logging import logger
+import time
+import re
+
+from typing import Any, Dict, List, Optional
+
 from dotenv import load_dotenv
+from groq import Groq
 
+from config.logging import logger
 
-load_dotenv()  
+load_dotenv()
+
 
 class LLMService:
-    """Generates personalized content using Groq LLM."""
-    
+    """
+    Production-ready wrapper around Groq.
+
+    Responsibilities
+    ----------------
+    • Prompt management
+    • Retry logic
+    • Response validation
+    • Response cleaning
+    • Token budgeting
+    • Config management
+
+    Public API intentionally stays compatible with the existing project.
+    """
+
+    DEFAULT_MODEL = "llama-3.1-8b-instant"
+
+    EMAIL_TEMPERATURE = 0.65
+    SUBJECT_TEMPERATURE = 0.80
+    REVIEW_TEMPERATURE = 0.20
+
+    EMAIL_MAX_TOKENS = 900
+    SUBJECT_MAX_TOKENS = 60
+
+    MAX_RETRIES = 3
+
     def __init__(self):
+
         self.api_key = os.getenv("GROQ_API_KEY", "")
-        self.client = Groq(api_key=self.api_key) if self.api_key else None
-        self.model = "llama-3.1-8b-instant"  # Fast & cheap
-    
+
+        self.client = (
+            Groq(api_key=self.api_key)
+            if self.api_key
+            else None
+        )
+
+        self.model = os.getenv(
+            "GROQ_MODEL",
+            self.DEFAULT_MODEL,
+        )
+
+        logger.info(
+            "LLMService initialized | Model=%s",
+            self.model,
+        )
+
+    ####################################################################
+    # Public
+    ####################################################################
+
     def is_available(self) -> bool:
-        return self.client is not None and bool(self.api_key)
+        return (
+            self.client is not None
+            and bool(self.api_key)
+        )
+
+    ####################################################################
+    # Core Generator
+    ####################################################################
+
+    def _generate(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        temperature: float,
+        max_tokens: int,
+    ) -> Optional[str]:
+
+        if not self.is_available():
+
+            logger.warning(
+                "Groq API unavailable."
+            )
+
+            return None
+
+        last_exception = None
+
+        for attempt in range(
+            1,
+            self.MAX_RETRIES + 1,
+        ):
+
+            try:
+
+                logger.info(
+                    "Groq request (%d/%d)",
+                    attempt,
+                    self.MAX_RETRIES,
+                )
+
+                response = (
+                    self.client.chat.completions.create(
+                        model=self.model,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": system_prompt,
+                            },
+                            {
+                                "role": "user",
+                                "content": user_prompt,
+                            },
+                        ],
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                )
+
+                if (
+                    not response.choices
+                    or response.choices[0].message is None
+                ):
+
+                    raise RuntimeError(
+                        "Empty response from Groq."
+                    )
+
+                content = (
+                    response.choices[0]
+                    .message.content
+                )
+
+                content = self._clean_response(
+                    content
+                )
+
+                if not self._validate_response(
+                    content
+                ):
+                    raise RuntimeError(
+                        "Generated response failed validation."
+                    )
+
+                return content
+
+            except Exception as e:
+
+                last_exception = e
+
+                logger.warning(
+                    "Groq attempt %d failed: %s",
+                    attempt,
+                    e,
+                )
+
+                if attempt < self.MAX_RETRIES:
+
+                    time.sleep(attempt)
+
+        logger.error(
+            "Groq generation failed after retries: %s",
+            last_exception,
+        )
+
+        return None
+
+    ####################################################################
+    # Cleaning
+    ####################################################################
+
+    def _clean_response(
+        self,
+        text: Optional[str],
+    ) -> str:
+
+        if not text:
+            return ""
+
+        text = text.strip()
+
+        text = re.sub(
+            r"^```.*?\n",
+            "",
+            text,
+            flags=re.DOTALL,
+        )
+
+        text = text.replace(
+            "```",
+            "",
+        )
+
+        prefixes = [
+            "Email:",
+            "Subject:",
+            "Body:",
+        ]
+
+        for prefix in prefixes:
+
+            if text.startswith(prefix):
+
+                text = text[
+                    len(prefix):
+                ].strip()
+
+        text = text.replace(
+            "\r",
+            "",
+        )
+
+        text = re.sub(
+            r"\n{3,}",
+            "\n\n",
+            text,
+        )
+
+        return text.strip()
+
+    ####################################################################
+    # Validation
+    ####################################################################
+
+    def _validate_response(
+        self,
+        text: str,
+    ) -> bool:
+
+        if not text:
+            return False
+
+        if len(text) < 30:
+            return False
+
+        banned = [
+            "As an AI",
+            "I am an AI",
+            "Language model",
+            "OpenAI",
+            "Groq",
+            "Here's your email",
+        ]
+
+        lower = text.lower()
+
+        for phrase in banned:
+
+            if phrase.lower() in lower:
+
+                return False
+
+        return True
+
+    ####################################################################
+    # Prompt Helpers
+    ####################################################################
+
+    def _limit_text(
+        self,
+        text: str,
+        max_chars: int,
+    ) -> str:
+
+        if not text:
+            return ""
+
+        if len(text) <= max_chars:
+            return text
+
+        return (
+            text[:max_chars]
+            + "\n..."
+        )
+
+    def _skills_to_text(
+        self,
+        skills: List[str],
+        limit: int = 6,
+    ) -> str:
+
+        if not skills:
+            return "Relevant technologies"
+
+        return ", ".join(
+            skills[:limit]
+        )
+
+    def _links_to_text(
+        self,
+        links: Dict[str, str],
+    ) -> str:
+
+        if not links:
+            return ""
+
+        output = []
+
+        if links.get("linkedin"):
+            output.append(
+                f"LinkedIn: {links['linkedin']}"
+            )
+
+        if links.get("github"):
+            output.append(
+                f"GitHub: {links['github']}"
+            )
+
+        if links.get("portfolio"):
+            output.append(
+                f"Portfolio: {links['portfolio']}"
+            )
+
+        return "\n".join(output)
+
+    def _talking_points(
+        self,
+        talking_points: List[str],
+    ) -> str:
+
+        if not talking_points:
+
+            return (
+                "- Interested in the company"
+            )
+
+        return "\n".join(
+            f"- {point}"
+            for point in talking_points[:10]
+        )
     
+        ####################################################################
+    # Email Prompt Builders
+    ####################################################################
+
+    def _build_email_system_prompt(
+        self,
+        is_personal_email: bool,
+    ) -> str:
+
+        if is_personal_email:
+
+            return """
+You are an expert networking coach.
+
+Write emails that sound like they were written by a real student.
+
+Rules:
+
+- Never sound like AI.
+- Never exaggerate.
+- Never invent experience.
+- Never use clichés.
+- Be warm and respectful.
+- Keep paragraphs short.
+- Avoid corporate buzzwords.
+- Sound natural.
+- Under 250 words.
+
+Return ONLY the email body.
+"""
+
+        return """
+You are an experienced technical recruiter and professional career coach.
+
+Your job is to write highly personalised cold emails for internship/job applications.
+
+Rules:
+
+- Never fabricate projects or experience.
+- Never claim knowledge the candidate doesn't have.
+- Never use AI clichés.
+- Never write generic openings.
+- Show genuine interest in the company.
+- Use information from the job description whenever available.
+- Mention relevant technologies naturally.
+- Explain WHY the candidate fits.
+- Mention attached resume.
+- Finish with a confident CTA.
+
+Style:
+
+- Human
+- Concise
+- Professional
+- Authentic
+- 200–350 words
+
+Return ONLY the email body.
+"""
+
+    def _build_email_user_prompt(
+        self,
+        *,
+        profile_name,
+        profile_degree,
+        profile_college,
+        profile_grad_year,
+        profile_skills,
+        profile_objective,
+        profile_links,
+        company_name,
+        company_description,
+        company_industry,
+        role,
+        talking_points,
+        tone,
+        job=None,
+        is_personal_email=False,
+    ) -> str:
+
+        skills = self._skills_to_text(profile_skills)
+
+        links = self._links_to_text(profile_links)
+
+        talking = self._talking_points(talking_points)
+
+        jd_text = ""
+
+        if job:
+
+            if getattr(job, "title", None):
+
+                jd_text += (
+                    f"\nJob Title:\n{job.title}\n"
+                )
+
+            if getattr(job, "raw_text", None):
+
+                jd_text += (
+                    "\nJob Description:\n"
+                    + self._limit_text(
+                        job.raw_text,
+                        1800,
+                    )
+                )
+
+            if getattr(job, "tech_stack", None):
+
+                jd_text += (
+                    "\nRequired Technologies:\n"
+                    + ", ".join(
+                        job.tech_stack[:12]
+                    )
+                )
+
+            if getattr(job, "required_skills", None):
+
+                jd_text += (
+                    "\nRequired Skills:\n"
+                    + ", ".join(
+                        job.required_skills[:12]
+                    )
+                )
+
+            if getattr(job, "responsibilities", None):
+
+                jd_text += (
+                    "\nResponsibilities:\n"
+                    + "\n".join(
+                        "- " + x
+                        for x in job.responsibilities[:6]
+                    )
+                )
+
+        if is_personal_email:
+
+            return f"""
+Candidate
+
+Name:
+{profile_name}
+
+Education:
+{profile_degree}
+
+College:
+{profile_college}
+
+Graduation:
+{profile_grad_year}
+
+Skills:
+{skills}
+
+Career Objective:
+{profile_objective}
+
+Links:
+{links}
+
+Reason for reaching out:
+{talking}
+
+Tone:
+{tone}
+
+Recipient:
+{company_name}
+
+Requirements
+
+1. Start with Hi.
+2. Introduce yourself naturally.
+3. Mention why you're reaching out.
+4. Keep it friendly.
+5. Ask for advice or guidance.
+6. Mention resume.
+7. Finish professionally.
+"""
+
+        return f"""
+Candidate
+
+Name:
+{profile_name}
+
+Education:
+{profile_degree}
+
+College:
+{profile_college}
+
+Graduation:
+{profile_grad_year}
+
+Skills:
+{skills}
+
+Career Objective:
+{profile_objective}
+
+Professional Links:
+{links}
+
+Company
+
+Name:
+{company_name}
+
+Industry:
+{company_industry}
+
+Description:
+{company_description}
+
+Role:
+{role}
+
+Job Information:
+{jd_text}
+
+Reasons for applying:
+{talking}
+
+Preferred Tone:
+{tone}
+
+Requirements
+
+1. Greeting should feel natural.
+2. Strong opening paragraph.
+3. Explain genuine interest.
+4. Connect projects and skills.
+5. Reference the job description.
+6. Mention technologies naturally.
+7. Mention attached resume.
+8. End with a clear CTA.
+9. Do NOT sound like AI.
+10. Do NOT use generic openings.
+11. Maximum 350 words.
+"""
+
+    ####################################################################
+    # Email Generation
+    ####################################################################
+
     def generate_email(
         self,
         profile_name: str,
@@ -35,164 +600,300 @@ class LLMService:
         talking_points: list,
         tone: str,
         is_personal_email: bool = False,
-        job: Any = None,  # ← NEW
+        job: Any = None,
+        rag_context: str = ""
+
     ) -> Optional[str]:
-        """Generate a personalized cold email using Groq."""
-        
+
         if not self.is_available():
-            logger.warning("Groq API key not set. Falling back to template.")
-            return None
-        
-        skills_str = ", ".join(profile_skills[:6]) if profile_skills else "various technologies"
-        links_str = ""
-        if profile_links.get("linkedin"):
-            links_str += f"\nLinkedIn: {profile_links['linkedin']}"
-        if profile_links.get("portfolio"):
-            links_str += f"\nPortfolio: {profile_links['portfolio']}"
-        if profile_links.get("github"):
-            links_str += f"\nGitHub: {profile_links['github']}"
-        
-        talking_points_str = "\n".join([f"- {tp}" for tp in talking_points]) if talking_points else "- The company's innovative work"
 
-        # Build JD context
-        jd_context = ""
-        if job:
-            if hasattr(job, "raw_text") and job.raw_text:
-                jd_context += f"\n\nJob Description Context:\n{job.raw_text[:800]}"
-            if hasattr(job, "required_skills") and job.required_skills:
-                jd_context += f"\n\nRequired Skills: {', '.join(job.required_skills)}"
-            if hasattr(job, "responsibilities") and job.responsibilities:
-                jd_context += f"\n\nKey Responsibilities: {', '.join(job.responsibilities[:3])}"
-
-        
-        if is_personal_email:
-            system_prompt = """You are an expert at writing professional networking emails. 
-Write a concise, warm email (150-250 words) to a professional contact. 
-Be respectful of their time. Mention you're a student looking for opportunities."""
-            
-            user_prompt = f"""Write a personalized cold email from {profile_name} to {company_name}.
-
-About me:
-- {profile_degree} at {profile_college}, graduating {profile_grad_year}
-- Skills: {skills_str}
-- Career objective: {profile_objective}
-- Links: {links_str}
-
-Why I'm reaching out:
-{talking_points_str}
-
-Tone: {tone}
-
-Requirements:
-1. Start with "Hi {company_name},"
-2. Mention I came across their profile
-3. Briefly introduce myself (2-3 sentences)
-4. Ask for advice or referrals
-5. End professionally
-6. Keep it under 250 words
-7. Do NOT use generic filler like "I hope this email finds you well"
-8. Make it sound human and authentic
-
-Write ONLY the email body, no subject line, no explanations."""
-        else:
-            system_prompt = f"""You are an expert at writing cold emails for job applications.
-
-Your goal is to produce an email that sounds genuinely written by a human after reading the company's website and job description.
-
-If a Job Description is provided, use it heavily.
-
-Mention:
-- technologies
-- responsibilities
-- required skills
-- domain
-- products
-- values
-
-naturally throughout the email.
-
-Never fabricate experience.
-
-Write a compelling email between 200-350 words.
-"""
-            
-            user_prompt = f"""Write a personalized cold email from {profile_name} applying for the {role} role at {company_name}.
-
-About me:
-- {profile_degree} at {profile_college}, graduating {profile_grad_year}
-- Skills: {skills_str}
-- Career objective: {profile_objective}
-- Links: {links_str}
-
-About the company:
-- Name: {company_name}
-- Description: {company_description or 'A growing company'}
-- Industry: {company_industry or 'Technology'}
-
-{jd_context}
-
-- Why I'm interested:
-{talking_points_str}
-
-Tone: {tone}
-
-Requirements:
-1. Start with "Hi Team at {company_name},"
-2. Hook: Mention something specific about the company or role (NOT generic)
-3. Brief intro + value proposition (why I'm a good fit)
-4. Specific connection between my skills and the role
-5. Clear call-to-action (ask for a conversation/interview)
-6. End with "Best regards,\n{profile_name}" + links
-7. Mention I've attached my resume
-8. Keep it 200-350 words
-9. Do NOT use clichés like "I hope this email finds you well" or "To whom it may concern"
-10. Make it sound like a real human wrote it, not AI
-11. Reference specific skills or requirements from the job description to show I've read it carefully.
-
-Write ONLY the email body, no subject line, no explanations."""
-
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-                max_tokens=800,
+            logger.warning(
+                "LLM unavailable."
             )
-            email_body = response.choices[0].message.content.strip()
-            logger.info(f"Groq generated email for {company_name}")
-            return email_body
-            
-        except Exception as e:
-            logger.error(f"Groq generation failed: {e}")
+
             return None
+
+        logger.info(
+            "Generating email for %s",
+            company_name,
+        )
+
+        system_prompt = (
+            self._build_email_system_prompt(
+                is_personal_email
+            )
+        )
+
+        user_prompt = (
+            self._build_email_user_prompt(
+                profile_name=profile_name,
+                profile_degree=profile_degree,
+                profile_college=profile_college,
+                profile_grad_year=profile_grad_year,
+                profile_skills=profile_skills,
+                profile_objective=profile_objective,
+                profile_links=profile_links,
+                company_name=company_name,
+                company_description=company_description,
+                company_industry=company_industry,
+                role=role,
+                talking_points=talking_points,
+                tone=tone,
+                job=job,
+                is_personal_email=is_personal_email,
+            )
+        )
+        if rag_context:
+            
+            user_prompt += f"""
+
+        Previous Successful Emails
+        --------------------------
+        {rag_context}
+
+        Use these previous emails only as inspiration.
+
+        Do NOT copy them.
+
+        Generate a fresh, personalised email based on the current company and role.
+        """
+
+        email = self._generate(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=self.EMAIL_TEMPERATURE,
+            max_tokens=self.EMAIL_MAX_TOKENS,
+        )
+
+        if email:
+
+            logger.info(
+                "Email successfully generated."
+            )
+
+        return email
     
-    def generate_subject(self, profile_name: str, role: str, company_name: str, is_personal: bool = False) -> str:
-        """Generate a catchy subject line."""
-        if not self.is_available():
-            return f"Application for {role} at {company_name} — {profile_name}" if not is_personal else f"{profile_name} — Looking for opportunities"
-        
-        prompt = f"""Write a short, catchy email subject line (max 60 characters) for a cold email from {profile_name} {'to a professional contact' if is_personal else f'applying for {role} at {company_name}'}.
 
-Requirements:
+    ####################################################################
+    # Subject Prompt Builder
+    ####################################################################
+
+    def _build_subject_prompt(
+        self,
+        profile_name: str,
+        role: str,
+        company_name: str,
+        is_personal: bool,
+    ) -> tuple[str, str]:
+
+        system_prompt = """
+You are an expert recruiter.
+
+Generate professional email subject lines.
+
+Rules:
+
+- Maximum 60 characters
+- Professional
+- Human sounding
+- No quotes
+- No markdown
 - No ALL CAPS
+- No emojis
 - No excessive punctuation
-- Professional but intriguing
-- Under 60 characters
 
-Write ONLY the subject line, nothing else."""
+Return ONLY the subject.
+"""
 
-        try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.8,
-                max_tokens=50,
+        if is_personal:
+
+            user_prompt = f"""
+Generate a networking email subject.
+
+Candidate:
+{profile_name}
+
+Recipient:
+{company_name}
+
+Goal:
+Networking / career advice.
+"""
+
+        else:
+
+            user_prompt = f"""
+Generate an internship/job application subject.
+
+Candidate:
+{profile_name}
+
+Company:
+{company_name}
+
+Role:
+{role}
+"""
+
+        return system_prompt, user_prompt
+
+    ####################################################################
+    # Subject Generation
+    ####################################################################
+
+    def generate_subject(
+        self,
+        profile_name: str,
+        role: str,
+        company_name: str,
+        is_personal: bool = False,
+    ) -> str:
+
+        if not self.is_available():
+
+            if is_personal:
+                return (
+                    f"{profile_name} | Seeking Guidance"
+                )
+
+            return (
+                f"{role} Application | {profile_name}"
             )
-            subject = response.choices[0].message.content.strip().replace('"', '')
-            return subject[:60]
-        except Exception as e:
-            logger.error(f"Subject generation failed: {e}")
-            return f"Application for {role} at {company_name} — {profile_name}"
+
+        logger.info(
+            "Generating subject for %s",
+            company_name,
+        )
+
+        system_prompt, user_prompt = (
+            self._build_subject_prompt(
+                profile_name,
+                role,
+                company_name,
+                is_personal,
+            )
+        )
+
+        subject = self._generate(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=self.SUBJECT_TEMPERATURE,
+            max_tokens=self.SUBJECT_MAX_TOKENS,
+        )
+
+        if not subject:
+
+            if is_personal:
+                return (
+                    f"{profile_name} | Seeking Guidance"
+                )
+
+            return (
+                f"{role} Application | {profile_name}"
+            )
+
+        subject = subject.replace('"', "").strip()
+
+        if len(subject) > 60:
+            subject = subject[:60].rstrip()
+
+        return subject
+
+    ####################################################################
+    # Utility Methods
+    ####################################################################
+
+    def estimate_tokens(
+        self,
+        text: str,
+    ) -> int:
+        """
+        Rough token estimate.
+        """
+
+        if not text:
+            return 0
+
+        return int(len(text) / 4)
+
+    def truncate_for_context(
+        self,
+        text: str,
+        max_tokens: int = 800,
+    ) -> str:
+        """
+        Truncate long context before sending to the LLM.
+        """
+
+        if not text:
+            return ""
+
+        max_chars = max_tokens * 4
+
+        if len(text) <= max_chars:
+            return text
+
+        return text[:max_chars] + "\n..."
+
+    def build_context_summary(
+        self,
+        company_description: str,
+        talking_points: list,
+        job=None,
+    ) -> str:
+        """
+        Build a lightweight context summary.
+        """
+
+        summary = []
+
+        if company_description:
+            summary.append(
+                self.truncate_for_context(
+                    company_description,
+                    120,
+                )
+            )
+
+        if talking_points:
+            summary.extend(
+                talking_points[:5]
+            )
+
+        if job:
+
+            if getattr(job, "title", None):
+                summary.append(
+                    f"Role: {job.title}"
+                )
+
+            if getattr(job, "tech_stack", None):
+                summary.append(
+                    "Tech: "
+                    + ", ".join(
+                        job.tech_stack[:8]
+                    )
+                )
+
+        return "\n".join(summary)
+
+    ####################################################################
+    # Health Check
+    ####################################################################
+
+    def health(self) -> dict:
+        """
+        Returns LLM configuration and availability.
+        """
+
+        return {
+            "provider": "Groq",
+            "available": self.is_available(),
+            "model": self.model,
+            "email_temperature": self.EMAIL_TEMPERATURE,
+            "subject_temperature": self.SUBJECT_TEMPERATURE,
+            "email_max_tokens": self.EMAIL_MAX_TOKENS,
+            "subject_max_tokens": self.SUBJECT_MAX_TOKENS,
+            "max_retries": self.MAX_RETRIES,
+        }
+    

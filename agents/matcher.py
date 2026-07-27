@@ -7,6 +7,29 @@ from config.logging import logger
 class PersonalizationMatcher:
     """Matches user profile against company/job and generates talking points."""
 
+    SKILL_WEIGHTS = {
+        "python": 5,
+        "fastapi": 5,
+        "machine learning": 5,
+        "deep learning": 5,
+        "tensorflow": 5,
+        "pytorch": 5,
+        "langchain": 5,
+        "langgraph": 5,
+        "docker": 4,
+        "postgresql": 4,
+        "mongodb": 3,
+        "redis": 3,
+        "aws": 4,
+        "azure": 3,
+        "gcp": 3,
+        "react": 3,
+        "javascript": 2,
+        "typescript": 2,
+        "html": 1,
+        "css": 1,
+}
+
     def __init__(self):
         pass
 
@@ -21,7 +44,10 @@ class PersonalizationMatcher:
         jd_skills = set()
         if job and job.required_skills:
             jd_skills = set(s.lower().strip() for s in job.required_skills if s.strip())
-            company_skills.update(jd_skills)
+            company_skills = {
+                skill.strip().lower()
+                for skill in company_skills.union(jd_skills)
+            }
 
         talking_points = []
         strengths = []
@@ -32,14 +58,48 @@ class PersonalizationMatcher:
             overlap = user_skills & company_skills
             missing = company_skills - user_skills
             
-            skill_match = min((len(overlap) / max(len(company_skills), 1)) * 100, 100)
+            matched_weight = sum(
+                self.SKILL_WEIGHTS.get(skill, 2)
+                for skill in overlap
+            )
+
+            total_weight = sum(
+                self.SKILL_WEIGHTS.get(skill, 2)
+                for skill in company_skills
+            )
+
+            skill_match = (
+                (matched_weight / max(total_weight, 1)) * 100
+            )
             
             if overlap:
-                talking_points.append(f"Strong alignment in {', '.join(sorted(overlap))}")
-                strengths.append(f"Matches {len(overlap)} key skills: {', '.join(sorted(overlap))}")
-            if missing:
-                weaknesses.append(f"Missing: {', '.join(sorted(missing))}")
-                improvements.append("Highlight transferable skills and willingness to learn")
+                top_overlap = sorted(
+                    overlap,
+                    key=lambda s: self.SKILL_WEIGHTS.get(s, 2),
+                    reverse=True,
+                )
+
+                if top_overlap:
+                    talking_points.append(
+                        "Strong alignment in "
+                        + ", ".join(top_overlap[:5])
+                    )
+                strengths.append(
+                    f"Matches {len(overlap)} important skills: "+ ", ".join(top_overlap[:5]))
+
+            critical_missing = sorted(
+                missing,key=lambda s: self.SKILL_WEIGHTS.get(s, 2),reverse=True,)
+
+            if critical_missing:
+                weaknesses.append(
+                    "Missing high-priority skills: "
+                    + ", ".join(critical_missing[:5])
+                )
+
+                improvements.append(
+                    "Highlight transferable experience related to "
+                    + critical_missing[0]
+                )
         else:
             skill_match = 60.0
             talking_points.append(f"Interested in {company.name}'s mission and growth")
@@ -59,7 +119,25 @@ class PersonalizationMatcher:
                 company_fit = 90.0
                 talking_points.append(f"Career objective aligns with {company.industry}")
 
-        overall = (company_fit + skill_match) / 2
+        overall = (skill_match * 0.7 +company_fit * 0.3)
+
+        if skill_match >= 90:
+            talking_points.append("Excellent technical alignment with the role.")
+
+        elif skill_match >= 75:
+            talking_points.append
+            ("Strong technical fit for this opportunity.")
+
+        elif skill_match >= 60:
+            talking_points.append
+            ("Good foundation with transferable technical skills.")
+
+        # confidence = "Low"
+
+        # if skill_match >= 85:
+        #     confidence = "High"
+        # elif skill_match >= 60:
+        #     confidence = "Medium"
 
         return MatchScore(
             company_fit=round(company_fit, 1),
