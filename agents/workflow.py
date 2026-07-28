@@ -7,10 +7,12 @@ from agents.state import AgentState
 from agents.nodes.research import ResearchNode
 from agents.nodes.parse import ResumeParserNode, JobDescriptionParserNode
 from agents.nodes.match import MatchNode
+from agents.nodes.personalization import PersonalizationNode
 from agents.nodes.write import WriteNode
 from agents.nodes.review import ReviewNode
 from agents.nodes.human_approval import HumanApprovalNode
 from agents.nodes.send import SendNode
+
 from config.logging import logger
 
 
@@ -25,6 +27,7 @@ class ColdMailWorkflow:
         self.builder.add_node("parse_jd", JobDescriptionParserNode())
         self.builder.add_node("research", ResearchNode())
         self.builder.add_node("match", MatchNode())
+        self.builder.add_node("personalization", PersonalizationNode())
         self.builder.add_node("write", WriteNode())
         self.builder.add_node("review", ReviewNode())
         self.builder.add_node("human_approval", HumanApprovalNode())
@@ -36,11 +39,13 @@ class ColdMailWorkflow:
         self.builder.add_edge("parse_resume", "parse_jd")
         self.builder.add_edge("parse_jd", "research")
         self.builder.add_edge("research", "match")
-        self.builder.add_edge("match", "write")
+        self.builder.add_edge("match", "personalization")
+        self.builder.add_edge("personalization", "write")
         self.builder.add_edge("write", "review")
 
         # Review can rewrite or move to approval
         self.builder.add_conditional_edges(
+            
             "review",
             self._after_review,
             {"rewrite": "write", "approve": "human_approval", "end": END}

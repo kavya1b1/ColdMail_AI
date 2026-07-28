@@ -644,7 +644,7 @@ Requirements
             )
         )
         if rag_context:
-            
+
             user_prompt += f"""
 
         Previous Successful Emails
@@ -798,7 +798,41 @@ Role:
             subject = subject[:60].rstrip()
 
         return subject
+    
+    ####################################################################
+    # Personalization Plan Generation
+    ####################################################################
 
+    def generate_personalization_plan(
+        self,
+        prompt: str,
+    ) -> Optional[str]:
+        """
+        Generate a JSON personalization plan.
+        """
+
+        system_prompt = """
+    You are an expert AI Career Strategist.
+
+    You NEVER write emails.
+
+    Your only responsibility is to analyse the candidate,
+    company and job description, then produce a structured
+    personalization strategy.
+
+    Return ONLY valid JSON.
+
+    Do not wrap the JSON in markdown.
+    """
+
+        logger.info("Generating personalization plan")
+
+        return self._generate(
+            system_prompt=system_prompt,
+            user_prompt=prompt,
+            temperature=0.3,
+            max_tokens=700,
+        )
     ####################################################################
     # Utility Methods
     ####################################################################
