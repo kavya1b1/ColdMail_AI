@@ -92,12 +92,15 @@ class WriteNode:
         except Exception as e:
             logger.warning(f"Failed to retrieve RAG context: {e}")
 
+        personalization_plan = state.get("personalization_plan")
+
         writer_context = {
             "resume_text": resume_text,
             "jd_text": jd_text,
             "research_results": research_results,
             "match_context": match_context,
             "rag_context": rag_context,
+            "personalization_plan": personalization_plan,
         }
 
         # -------------------------

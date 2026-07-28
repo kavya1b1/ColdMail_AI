@@ -1,9 +1,16 @@
 """LangGraph state definitions"""
 from typing import TypedDict, List, Dict, Any, Optional
 from models.schemas import (
-    UserProfile, CompanyInfo, MatchScore, 
-    GeneratedEmail, EmailCampaign, CampaignGoal,
-    ResumeParseResult, JobDescription, EmailReview
+    UserProfile,
+    CompanyInfo,
+    MatchScore,
+    GeneratedEmail,
+    EmailCampaign,
+    CampaignGoal,
+    ResumeParseResult,
+    JobDescription,
+    EmailReview,
+    PersonalizationPlan,
 )
 
 
@@ -26,8 +33,8 @@ class AgentState(TypedDict):
     matches: List[MatchScore]
 
     # Writing
+    personalization_plan: Optional[PersonalizationPlan]
     generated_emails: List[GeneratedEmail]
-
     # Review
     reviews: List[EmailReview]
     needs_rewrite: List[bool]

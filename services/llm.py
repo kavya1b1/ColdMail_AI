@@ -599,6 +599,7 @@ Requirements
         role: str,
         talking_points: list,
         tone: str,
+        personalization_plan=None,
         is_personal_email: bool = False,
         job: Any = None,
         rag_context: str = ""
@@ -643,6 +644,39 @@ Requirements
                 is_personal_email=is_personal_email,
             )
         )
+        if personalization_plan:
+
+            user_prompt += f"""
+
+        Personalization Strategy
+        ------------------------
+
+        Opening Hook:
+        {personalization_plan.opening_hook}
+
+        Primary Strength:
+        {personalization_plan.key_strength}
+
+        Projects To Highlight:
+        {", ".join(personalization_plan.projects_to_highlight)}
+
+        Skills To Emphasize:
+        {", ".join(personalization_plan.skills_to_emphasize)}
+
+        Skills To Avoid:
+        {", ".join(personalization_plan.skills_to_avoid)}
+
+        Overall Strategy:
+        {personalization_plan.personalization_strategy}
+
+        Reason:
+        {personalization_plan.reason_for_selection}
+
+        Use this strategy when writing the email.
+
+        Do NOT mention this planning process.
+        """
+            
         if rag_context:
 
             user_prompt += f"""

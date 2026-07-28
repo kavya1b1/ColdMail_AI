@@ -12,7 +12,6 @@ from models.schemas import (
 )
 from services.llm import LLMService
 
-
 class EmailWriter:
     """
     Responsible for generating highly personalised cold emails.
@@ -48,6 +47,7 @@ class EmailWriter:
         research_results = context.get("research_results", [])
         match_context = context.get("match_context", [])
         rag_context = context.get("rag_context", "")
+        personalization_plan = context.get("personalization_plan")
 
         role_text = (
             role
@@ -75,13 +75,14 @@ class EmailWriter:
                     jd_text=jd_text,
                     research_results=research_results,
                     match_context=match_context,
+                    personalization_plan=personalization_plan,
                 )
                 print("=" * 80)
                 print("RAG CONTEXT")
                 print("=" * 80)
                 print(rag_context)
                 print("=" * 80)
-                
+
                 ai_body = self.llm.generate_email(
                     profile_name=profile.name,
                     profile_degree=profile.degree,
@@ -104,6 +105,7 @@ class EmailWriter:
                         if hasattr(profile.tone, "value")
                         else str(profile.tone)
                     ),
+                    personalization_plan=personalization_plan,   # <-- ADD THIS LINE
                     is_personal_email=company.is_personal_email,
                     job=job,
                     rag_context=rag_context,
@@ -200,6 +202,7 @@ class EmailWriter:
         jd_text,
         research_results,
         match_context,
+        personalization_plan=None,
     ):
 
         talking_points = list(match.talking_points)
@@ -232,13 +235,49 @@ class EmailWriter:
 
                 break
 
+        # -----------------------------
+        # Inject Personalization Plan
+        # -----------------------------
+        if personalization_plan:
+
+            talking_points.insert(
+                0,
+                f"Opening Hook: {personalization_plan.opening_hook}",
+            )
+
+            talking_points.append(
+                f"Key Strength: {personalization_plan.key_strength}"
+            )
+
+            if personalization_plan.projects_to_highlight:
+                talking_points.append(
+                    "Projects: "
+                    + ", ".join(personalization_plan.projects_to_highlight)
+                )
+
+            if personalization_plan.skills_to_emphasize:
+                talking_points.append(
+                    "Emphasize: "
+                    + ", ".join(personalization_plan.skills_to_emphasize)
+                )
+
+            if personalization_plan.skills_to_avoid:
+                talking_points.append(
+                    "Avoid: "
+                    + ", ".join(personalization_plan.skills_to_avoid)
+                )
+
+            talking_points.append(
+                "Strategy: "
+                + personalization_plan.personalization_strategy
+            )
+
         return {
             "resume_text": resume_text,
             "jd_text": jd_text,
             "research_results": research_results,
             "talking_points": talking_points,
         }
-    
     def _fallback_template(
         self,
         profile: UserProfile,

@@ -19,10 +19,11 @@ class PersonalizationNode:
 
         logger.info("Starting Personalization Node")
 
-        profile = state.get("profile")
+        profile = state.get("user_profile")
         companies = state.get("companies", [])
-        job = state.get("job")
-        match = state.get("match")
+        jobs = state.get("parsed_jobs", [])
+        matches = state.get("matches", [])
+        rag_context = state.get("rag_context", "")
         rag_context = state.get("rag_context", "")
 
         if not profile:
@@ -33,11 +34,13 @@ class PersonalizationNode:
             logger.warning("No company found.")
             return state
 
-        if not match:
+        if not matches:
             logger.warning("No match score found.")
             return state
 
         company = companies[0]
+        job = jobs[0] if jobs else None
+        match = matches[0] if matches else None
 
         try:
 
