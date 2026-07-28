@@ -159,7 +159,7 @@ class EmailReview(BaseModel):
     personalization_score: int = Field(ge=1, le=10)
     clarity_score: int = Field(ge=1, le=10)
     length_score: int = Field(ge=1, le=10)
-    overall_score: int = Field(ge=1, le=10)
+    overall_score: float = Field(ge=1, le=10)
     suggestions: List[str] = Field(default_factory=list)
     needs_rewrite: bool = False
 

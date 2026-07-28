@@ -76,7 +76,12 @@ class EmailWriter:
                     research_results=research_results,
                     match_context=match_context,
                 )
-
+                print("=" * 80)
+                print("RAG CONTEXT")
+                print("=" * 80)
+                print(rag_context)
+                print("=" * 80)
+                
                 ai_body = self.llm.generate_email(
                     profile_name=profile.name,
                     profile_degree=profile.degree,

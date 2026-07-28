@@ -99,19 +99,6 @@ class PersonalizationMatch(BaseModel):
     hook: Optional[str] = None
     relevance_score: int = Field(default=5, ge=1, le=10)
 
-
-class GeneratedEmail(BaseModel):
-    recipient_email: str
-    company_name: str
-    subject: str
-    body: str
-    personalization_score: int
-    key_points_used: List[str] = Field(default_factory=list)
-    approved: bool = False
-    sent: bool = False
-    sent_at: Optional[datetime] = None
-
-
 class EmailCampaign(BaseModel):
     id: str
     goal: CampaignGoal
@@ -161,6 +148,26 @@ class MatchScore(BaseModel):
     weaknesses: List[str] = Field(default_factory=list)
     improvements: List[str] = Field(default_factory=list)
 
+class PersonalizationPlan(BaseModel):
+    """Strategic plan created before writing the email."""
+
+    company_summary: str = ""
+
+    personalization_strategy: str = ""
+
+    opening_hook: str = ""
+
+    projects_to_highlight: List[str] = Field(default_factory=list)
+
+    skills_to_emphasize: List[str] = Field(default_factory=list)
+
+    skills_to_avoid: List[str] = Field(default_factory=list)
+
+    tone: str = "Professional"
+
+    key_strength: str = ""
+
+    reason_for_selection: str = ""
 
 class EmailReview(BaseModel):
     grammar_score: int = Field(ge=1, le=10)
@@ -169,7 +176,7 @@ class EmailReview(BaseModel):
     personalization_score: int = Field(ge=1, le=10)
     clarity_score: int = Field(ge=1, le=10)
     length_score: int = Field(ge=1, le=10)
-    overall_score: int = Field(ge=1, le=10)
+    overall_score: float = Field(ge=1, le=10)
     suggestions: List[str] = Field(default_factory=list)
     needs_rewrite: bool = False
 
