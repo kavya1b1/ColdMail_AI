@@ -1,6 +1,6 @@
 # ColdMail AI Pro v2.0
 
-Production-grade multi-agent cold outreach system with LangGraph orchestration.
+Production-grade multi-agent cold outreach system with LangGraph orchestration .
 
 ## Architecture
 
