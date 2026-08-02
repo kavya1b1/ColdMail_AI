@@ -63,4 +63,4 @@ docker-compose up --build
 - ✅ FastAPI backend
 - ✅ Docker support
 - ✅ Retry logic (3 attempts)
-- ✅ Human approval checkpoint
+- ✅ Human approval checkpoints
