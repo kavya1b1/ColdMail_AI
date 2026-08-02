@@ -44,7 +44,6 @@ uvicorn api.main:app --reload
 # Run with Docker
 docker-compose up --build
 ```
-
 ## Required Keys
 
 | Key | Purpose | Get From |
