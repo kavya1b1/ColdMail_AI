@@ -3,7 +3,6 @@
 Production-grade multi-agent cold outreach system with LangGraph orchestration .
 
 ## Architecture
-
 ```
 LangGraph StateGraph
 ├── Supervisor Node (routing logic)
