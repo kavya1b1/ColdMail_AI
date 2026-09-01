@@ -1,99 +1,70 @@
-"""ChromaDB vector store service for RAG"""
+"""ChromaDB vector store with metadata-aware hybrid retrieval."""
 import chromadb
 from chromadb.config import Settings as ChromaSettings
 from sentence_transformers import SentenceTransformer
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
+
 from config.settings import settings
 from config.logging import logger
+from services.retrieval import HybridRetriever
 
 
 class VectorStoreService:
-    """ChromaDB vector store with semantic search"""
+    """Persist embeddings and expose metadata-filtered semantic/hybrid search."""
 
     def __init__(self):
-        self.client = chromadb.PersistentClient(
-            path=settings.CHROMA_PERSIST_DIR,
-            settings=ChromaSettings(anonymized_telemetry=False)
-        )
-        self.collection = self.client.get_or_create_collection(
-            name=settings.CHROMA_COLLECTION
-        )
+        self.client = chromadb.PersistentClient(path=settings.CHROMA_PERSIST_DIR, settings=ChromaSettings(anonymized_telemetry=False))
+        self.collection = self.client.get_or_create_collection(name=settings.CHROMA_COLLECTION)
         self.embedder = SentenceTransformer(settings.EMBEDDING_MODEL)
-        logger.info("VectorStoreService initialized")
+
+    def _add(self, item_id: str, text: str, metadata: Dict[str, Any]) -> bool:
+        try:
+            clean_metadata = {k: (str(v) if not isinstance(v, (str, int, float, bool)) else v) for k, v in metadata.items()}
+            self.collection.upsert(
+                ids=[item_id],
+                embeddings=[self.embedder.encode(text, normalize_embeddings=True).tolist()],
+                documents=[text],
+                metadatas=[clean_metadata],
+            )
+            return True
+        except Exception as exc:
+            logger.error("Vector store write error: %s", exc)
+            return False
 
     def add_company(self, company_id: str, company_data: Dict[str, Any]) -> bool:
-        """Add company profile to vector store"""
-        try:
-            text = f"{company_data.get('name', '')} {company_data.get('description', '')} "
-            text += f"{company_data.get('industry', '')} {' '.join(company_data.get('tech_stack', []))}"
-
-            embedding = self.embedder.encode(text).tolist()
-
-            self.collection.add(
-                ids=[f"company_{company_id}"],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[company_data]
-            )
-            logger.info(f"Company added to vector store: {company_id}")
-            return True
-        except Exception as e:
-            logger.error(f"Vector store add error: {e}")
-            return False
+        text = f"{company_data.get('name', '')} {company_data.get('description', '')} {company_data.get('industry', '')} {' '.join(company_data.get('tech_stack', []))}"
+        return self._add(f"company_{company_id}", text, {**company_data, "record_type": "company"})
 
     def add_email(self, email_id: str, email_data: Dict[str, Any]) -> bool:
-        """Add generated email to vector store"""
-        try:
-            text = f"{email_data.get('subject', '')} {email_data.get('body', '')}"
-            embedding = self.embedder.encode(text).tolist()
+        text = f"{email_data.get('subject', '')} {email_data.get('body', '')}"
+        return self._add(f"email_{email_id}", text, {**email_data, "record_type": "email"})
 
-            self.collection.add(
-                ids=[f"email_{email_id}"],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[email_data]
-            )
-            return True
-        except Exception as e:
-            logger.error(f"Vector store add email error: {e}")
-            return False
-
-    def search_similar_companies(self, query: str, n_results: int = 5) -> List[Dict]:
-        """Search for similar companies"""
+    def _search(self, query: str, n_results: int, record_type: str) -> List[Dict[str, Any]]:
         try:
-            embedding = self.embedder.encode(query).tolist()
-            results = self.collection.query(
-                query_embeddings=[embedding],
-                n_results=n_results,
-                where={"$contains": "company_"}
-            )
-            return results.get("metadatas", [[]])[0]
-        except Exception as e:
-            logger.error(f"Vector search error: {e}")
+            embedding = self.embedder.encode(query, normalize_embeddings=True).tolist()
+            result = self.collection.query(query_embeddings=[embedding], n_results=n_results, where={"record_type": record_type})
+            metadatas = result.get("metadatas", [[]])[0]
+            distances = result.get("distances", [[]])[0]
+            return [{**item, "semantic_distance": distances[i] if i < len(distances) else None} for i, item in enumerate(metadatas)]
+        except Exception as exc:
+            logger.error("Vector search error: %s", exc)
             return []
 
-    def search_similar_emails(self, query: str, n_results: int = 5) -> List[Dict]:
-        """Search for similar emails (for RAG context)"""
-        try:
-            embedding = self.embedder.encode(query).tolist()
-            results = self.collection.query(
-                query_embeddings=[embedding],
-                n_results=n_results,
-                where={"$contains": "email_"}
-            )
-            return results.get("metadatas", [[]])[0]
-        except Exception as e:
-            logger.error(f"Vector search error: {e}")
-            return []
+    def search_similar_companies(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
+        return self._search(query, n_results, "company")
+
+    def search_similar_emails(self, query: str, n_results: int = 5) -> List[Dict[str, Any]]:
+        return self._search(query, n_results, "email")
 
     def get_relevant_context(self, company_name: str, skills: List[str]) -> str:
-        """Get relevant context for email generation"""
-        query = f"{company_name} {' '.join(skills)}"
-        similar = self.search_similar_emails(query, n_results=3)
-
-        context_parts = []
-        for item in similar:
-            if item and "body" in item:
-                context_parts.append(f"Previous successful email: {item['body'][:200]}...")
-
-        return "\n".join(context_parts) if context_parts else ""
+        """Use hybrid BM25+dense retrieval over prior emails."""
+        try:
+            raw = self.collection.get(where={"record_type": "email"}, include=["documents", "metadatas"])
+            docs = []
+            for text, metadata in zip(raw.get("documents", []), raw.get("metadatas", [])):
+                docs.append({"text": text, "metadata": metadata or {}})
+            results = HybridRetriever(docs).search(f"{company_name} {' '.join(skills)}", k=3)
+            return "\n".join(f"Previous relevant email: {r['text'][:300]}" for r in results)
+        except Exception as exc:
+            logger.error("Hybrid context retrieval failed: %s", exc)
+            return ""
