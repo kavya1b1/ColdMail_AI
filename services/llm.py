@@ -1,198 +1,151 @@
-"""Groq LLM Service for AI-powered email generation"""
+"""LLM service with evidence-aware structured generation."""
+import json
 import os
-from typing import Optional, Any
+from typing import Optional, Any, Dict, List
+
 from groq import Groq
-from config.logging import logger
 from dotenv import load_dotenv
 
+from config.logging import logger
+from models.ai_schemas import GeneratedEmailDraft, EmailReviewResult
 
-load_dotenv()  
+load_dotenv()
+
 
 class LLMService:
-    """Generates personalized content using Groq LLM."""
-    
+    """Generate and review content with strict Pydantic validation."""
+
     def __init__(self):
         self.api_key = os.getenv("GROQ_API_KEY", "")
         self.client = Groq(api_key=self.api_key) if self.api_key else None
-        self.model = "llama-3.1-8b-instant"  # Fast & cheap
-    
+        self.model = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
+
     def is_available(self) -> bool:
         return self.client is not None and bool(self.api_key)
-    
+
+    @staticmethod
+    def _json_object(text: str) -> Optional[dict]:
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            match = __import__("re").search(r"\{.*\}", text, __import__("re").S)
+            if match:
+                try:
+                    return json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    return None
+        return None
+
     def generate_email(
-        self,
-        profile_name: str,
-        profile_degree: str,
-        profile_college: str,
-        profile_grad_year: int,
-        profile_skills: list,
-        profile_objective: str,
-        profile_links: dict,
-        company_name: str,
-        company_description: str,
-        company_industry: str,
-        role: str,
-        talking_points: list,
-        tone: str,
-        is_personal_email: bool = False,
-        job: Any = None,  # ← NEW
+        self, profile_name: str, profile_degree: str, profile_college: str,
+        profile_grad_year: int, profile_skills: list, profile_objective: str,
+        profile_links: dict, company_name: str, company_description: str,
+        company_industry: str, role: str, talking_points: list, tone: str,
+        is_personal_email: bool = False, job: Any = None,
+        evidence: Optional[List[Dict[str, Any]]] = None,
     ) -> Optional[str]:
-        """Generate a personalized cold email using Groq."""
-        
+        """Generate an email while restricting company claims to supplied evidence."""
         if not self.is_available():
-            logger.warning("Groq API key not set. Falling back to template.")
             return None
-        
-        skills_str = ", ".join(profile_skills[:6]) if profile_skills else "various technologies"
-        links_str = ""
-        if profile_links.get("linkedin"):
-            links_str += f"\nLinkedIn: {profile_links['linkedin']}"
-        if profile_links.get("portfolio"):
-            links_str += f"\nPortfolio: {profile_links['portfolio']}"
-        if profile_links.get("github"):
-            links_str += f"\nGitHub: {profile_links['github']}"
-        
-        talking_points_str = "\n".join([f"- {tp}" for tp in talking_points]) if talking_points else "- The company's innovative work"
 
-        # Build JD context
-        jd_context = ""
-        if job:
-            if hasattr(job, "raw_text") and job.raw_text:
-                jd_context += f"\n\nJob Description Context:\n{job.raw_text[:800]}"
-            if hasattr(job, "required_skills") and job.required_skills:
-                jd_context += f"\n\nRequired Skills: {', '.join(job.required_skills)}"
-            if hasattr(job, "responsibilities") and job.responsibilities:
-                jd_context += f"\n\nKey Responsibilities: {', '.join(job.responsibilities[:3])}"
+        evidence = evidence or []
+        evidence_text = "\n".join(
+            f"[{item.get('id')}] {item.get('claim')} (source: {item.get('source_url')})"
+            for item in evidence[:6]
+        ) or "No verified company evidence available. Do not invent company-specific facts."
+        job_text = getattr(job, "raw_text", "")[:1200] if job else ""
+        requirements = getattr(job, "required_skills", []) if job else []
 
-        
-        if is_personal_email:
-            system_prompt = """You are an expert at writing professional networking emails. 
-Write a concise, warm email (150-250 words) to a professional contact. 
-Be respectful of their time. Mention you're a student looking for opportunities."""
-            
-            user_prompt = f"""Write a personalized cold email from {profile_name} to {company_name}.
+        prompt = f"""Return ONLY valid JSON matching this schema:
+{{"subject":"string","body":"string","key_points_used":["string"],"evidence_ids":["string"]}}
 
-About me:
-- {profile_degree} at {profile_college}, graduating {profile_grad_year}
-- Skills: {skills_str}
-- Career objective: {profile_objective}
-- Links: {links_str}
-
-Why I'm reaching out:
-{talking_points_str}
-
+Candidate: {profile_name}, {profile_degree} at {profile_college}, graduating {profile_grad_year}
+Skills: {', '.join(profile_skills[:10])}
+Objective: {profile_objective}
+Role: {role}
+Company: {company_name}
+Industry: {company_industry or 'unknown'}
+Description: {company_description or 'unknown'}
 Tone: {tone}
+Required skills: {', '.join(requirements)}
+JD excerpt: {job_text}
 
-Requirements:
-1. Start with "Hi {company_name},"
-2. Mention I came across their profile
-3. Briefly introduce myself (2-3 sentences)
-4. Ask for advice or referrals
-5. End professionally
-6. Keep it under 250 words
-7. Do NOT use generic filler like "I hope this email finds you well"
-8. Make it sound human and authentic
+VERIFIED COMPANY EVIDENCE:
+{evidence_text}
 
-Write ONLY the email body, no subject line, no explanations."""
-        else:
-            system_prompt = f"""You are an expert at writing cold emails for job applications.
+Relevant candidate talking points:
+{chr(10).join('- ' + x for x in talking_points[:8])}
 
-Your goal is to produce an email that sounds genuinely written by a human after reading the company's website and job description.
-
-If a Job Description is provided, use it heavily.
-
-Mention:
-- technologies
-- responsibilities
-- required skills
-- domain
-- products
-- values
-
-naturally throughout the email.
-
-Never fabricate experience.
-
-Write a compelling email between 200-350 words.
+Rules:
+- Never invent company facts, products, news, technologies, people, or culture.
+- Only use company-specific claims supported by the evidence above.
+- If there is no evidence, use a neutral opening rather than fabricating personalization.
+- Do not claim experience the candidate does not have.
+- Keep the body concise (120-220 words), human, specific, and professional.
+- Use at most 2 evidence-backed company claims.
+- Include one clear CTA.
+- Do not use "I hope this email finds you well" or similar filler.
+- evidence_ids must contain only IDs actually used in the body.
 """
-            
-            user_prompt = f"""Write a personalized cold email from {profile_name} applying for the {role} role at {company_name}.
-
-About me:
-- {profile_degree} at {profile_college}, graduating {profile_grad_year}
-- Skills: {skills_str}
-- Career objective: {profile_objective}
-- Links: {links_str}
-
-About the company:
-- Name: {company_name}
-- Description: {company_description or 'A growing company'}
-- Industry: {company_industry or 'Technology'}
-
-{jd_context}
-
-- Why I'm interested:
-{talking_points_str}
-
-Tone: {tone}
-
-Requirements:
-1. Start with "Hi Team at {company_name},"
-2. Hook: Mention something specific about the company or role (NOT generic)
-3. Brief intro + value proposition (why I'm a good fit)
-4. Specific connection between my skills and the role
-5. Clear call-to-action (ask for a conversation/interview)
-6. End with "Best regards,\n{profile_name}" + links
-7. Mention I've attached my resume
-8. Keep it 200-350 words
-9. Do NOT use clichés like "I hope this email finds you well" or "To whom it may concern"
-10. Make it sound like a real human wrote it, not AI
-11. Reference specific skills or requirements from the job description to show I've read it carefully.
-
-Write ONLY the email body, no subject line, no explanations."""
-
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
+                    {"role": "system", "content": "You are a precise, evidence-grounded outreach writer."},
+                    {"role": "user", "content": prompt},
                 ],
-                temperature=0.7,
-                max_tokens=800,
+                temperature=0.4,
+                max_tokens=700,
+                response_format={"type": "json_object"},
             )
-            email_body = response.choices[0].message.content.strip()
-            logger.info(f"Groq generated email for {company_name}")
-            return email_body
-            
-        except Exception as e:
-            logger.error(f"Groq generation failed: {e}")
+            parsed = self._json_object(response.choices[0].message.content.strip())
+            if not parsed:
+                return None
+            draft = GeneratedEmailDraft.model_validate(parsed)
+            return draft.body
+        except Exception as exc:
+            logger.error("Structured email generation failed: %s", exc)
             return None
-    
+
     def generate_subject(self, profile_name: str, role: str, company_name: str, is_personal: bool = False) -> str:
-        """Generate a catchy subject line."""
         if not self.is_available():
             return f"Application for {role} at {company_name} — {profile_name}" if not is_personal else f"{profile_name} — Looking for opportunities"
-        
-        prompt = f"""Write a short, catchy email subject line (max 60 characters) for a cold email from {profile_name} {'to a professional contact' if is_personal else f'applying for {role} at {company_name}'}.
-
-Requirements:
-- No ALL CAPS
-- No excessive punctuation
-- Professional but intriguing
-- Under 60 characters
-
-Write ONLY the subject line, nothing else."""
-
+        prompt = f"Write ONLY a professional email subject under 60 characters for {profile_name} contacting {company_name} about {role}. No hype or excessive punctuation."
         try:
             response = self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.8,
+                temperature=0.4,
                 max_tokens=50,
             )
-            subject = response.choices[0].message.content.strip().replace('"', '')
-            return subject[:60]
-        except Exception as e:
-            logger.error(f"Subject generation failed: {e}")
+            return response.choices[0].message.content.strip().replace('"', '')[:60]
+        except Exception:
             return f"Application for {role} at {company_name} — {profile_name}"
+
+    def review_email(self, body: str, evidence: Optional[List[Dict[str, Any]]] = None) -> Optional[EmailReviewResult]:
+        """Review an email for quality and unsupported claims."""
+        if not self.is_available():
+            return None
+        evidence_text = "\n".join(f"[{e.get('id')}] {e.get('claim')}" for e in (evidence or [])[:10]) or "No evidence supplied."
+        prompt = f"""Return ONLY valid JSON with fields: grammar_score, professionalism_score, personalization_score, clarity_score, evidence_grounding_score, hallucination_risk, spam_risk, overall_score, suggestions, unsupported_claims, needs_rewrite.
+
+EMAIL:
+{body}
+
+VERIFIED EVIDENCE:
+{evidence_text}
+
+Score 1-10. Identify company-specific claims that are not supported by the evidence. hallucination_risk and spam_risk are 0-10 (higher is worse). Set needs_rewrite true if unsupported claims exist, hallucination_risk >= 4, personalization < 6, or overall_score < 7."""
+        try:
+            response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "system", "content": "You are a strict email quality evaluator."}, {"role": "user", "content": prompt}],
+                temperature=0,
+                max_tokens=500,
+                response_format={"type": "json_object"},
+            )
+            parsed = self._json_object(response.choices[0].message.content.strip())
+            return EmailReviewResult.model_validate(parsed) if parsed else None
+        except Exception as exc:
+            logger.error("Email review failed: %s", exc)
+            return None
