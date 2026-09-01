@@ -1,8 +1,10 @@
-"""Pydantic schemas for API validation"""
-from pydantic import BaseModel, Field, EmailStr
-from typing import List, Optional, Dict, Any, Literal
+"""Pydantic schemas for API and agent-state validation."""
 from datetime import datetime
 from enum import Enum
+from typing import Any, Dict, List, Literal, Optional
+
+from pydantic import BaseModel, EmailStr, Field
+
 
 class CampaignGoal(str, Enum):
     INTERNSHIP = "internship"
@@ -58,8 +60,8 @@ class CompanyInfo(BaseModel):
     careers_page: Optional[str] = None
     company_size: Optional[str] = None
     industry: Optional[str] = None
-    role: Optional[str] = None  # ← NEW: target role at this company
-    is_personal_email: bool = False  # ← NEW
+    role: Optional[str] = None
+    is_personal_email: bool = False
 
     def to_context(self) -> str:
         parts = [f"Company: {self.name}"]
@@ -81,35 +83,26 @@ class CompanyInfo(BaseModel):
 
 
 class GeneratedEmail(BaseModel):
+    """Generated outreach plus provenance for company-specific claims."""
     recipient_email: str
     company_name: str
     subject: str
     body: str
-    personalization_score: int
+    personalization_score: int = Field(ge=0, le=100)
     key_points_used: List[str] = Field(default_factory=list)
-    role: Optional[str] = None  # ← NEW
-    resume_attached: bool = False  # ← NEW
+    evidence_ids: List[str] = Field(default_factory=list)
+    role: Optional[str] = None
+    resume_attached: bool = False
     approved: bool = False
     sent: bool = False
     sent_at: Optional[datetime] = None
+
 
 class PersonalizationMatch(BaseModel):
     skill_matches: List[str] = Field(default_factory=list)
     talking_points: List[str] = Field(default_factory=list)
     hook: Optional[str] = None
     relevance_score: int = Field(default=5, ge=1, le=10)
-
-
-class GeneratedEmail(BaseModel):
-    recipient_email: str
-    company_name: str
-    subject: str
-    body: str
-    personalization_score: int
-    key_points_used: List[str] = Field(default_factory=list)
-    approved: bool = False
-    sent: bool = False
-    sent_at: Optional[datetime] = None
 
 
 class EmailCampaign(BaseModel):
@@ -171,6 +164,9 @@ class EmailReview(BaseModel):
     length_score: int = Field(ge=1, le=10)
     overall_score: int = Field(ge=1, le=10)
     suggestions: List[str] = Field(default_factory=list)
+    unsupported_claims: List[str] = Field(default_factory=list)
+    evidence_grounding_score: int = Field(default=1, ge=1, le=10)
+    hallucination_risk: int = Field(default=10, ge=0, le=10)
     needs_rewrite: bool = False
 
 
